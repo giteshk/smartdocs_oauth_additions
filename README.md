@@ -1,0 +1,1 @@
+# smartdocs_oauth_client_credentials
