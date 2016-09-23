@@ -12,7 +12,7 @@
 function smartdocs_oauth_additions_preprocess_page(&$vars){
   $item = menu_get_item();
   if($item['map'][0] == 'node' && $item['map'][1]->type == 'smart_method'){
-    $oauth_schemes = [];
+    $oauth_schemes = array();
     $config = devconnect_default_org_config();
     $node = $item['map'][1];
 
@@ -46,7 +46,7 @@ function smartdocs_oauth_additions_form($form, $form_state, $node, $oauth_scheme
   if(empty($oauth_schemes)) {
     return $form;
   }
-  $options = [];
+  $options = array();
   if (user_is_logged_in()) {
     global $user;
     $app_entities = entity_load('developer_app', FALSE, array('mail' => $user->mail));
@@ -59,44 +59,44 @@ function smartdocs_oauth_additions_form($form, $form_state, $node, $oauth_scheme
     });
     asort($options);
   }
-  $form['user_app'] = [
+  $form['user_app'] = array(
     '#title' => 'API Key to use for the API call',
     '#type' => 'select',
-    '#options' => ['default' => 'Default Credentials'] + $options,
-    '#description' => 'Choose one of your APPs to use. You can request an APP to be created by clicking ' . l('here', 'user/me/apps'),
-  ];
+    '#options' => array('default' => 'Default Credentials') + $options,
+    '#description' => 'Choose one of your apps to use. You can request an app to be created by clicking ' . l('here', 'user/me/apps'),
+  );
   if(in_array('password', $oauth_schemes)){
-    $form['client_username'] = [
+    $form['client_username'] = array(
       '#title' => 'Username',
       '#type' => 'textfield',
       '#description' => 'Please enter the username',
-    ];
-    $form['client_password'] = [
+    );
+    $form['client_password'] = array(
       '#title' => 'Password',
       '#type' => 'password',
       '#description' => 'Please enter the password',
-    ];
+    );
   }
   $model_term = taxonomy_term_load($node->field_smart_method_model[LANGUAGE_NONE][0]['tid']);
-  $form['model'] = [
+  $form['model'] = array(
     '#type' => 'value',
     '#value' => $model_term->name,
-  ];
-  $form['revision'] = [
+  );
+  $form['revision'] = array(
     '#type' => 'value',
     '#value' => $node->field_smart_method_revision_num[LANGUAGE_NONE][0]['value'],
-  ];
-  $form['security'] = [
+  );
+  $form['security'] = array(
     '#type' => 'value',
     '#value' => $oauth_schemes,
-  ];
-  $form['submit'] = [
+  );
+  $form['submit'] = array(
     '#type' => 'submit',
     '#value' => t('Generate OAuth Token'),
-    '#ajax' => [
+    '#ajax' => array(
       'callback' => 'smartdocs_oauth_additions_form_generate_token',
-    ]
-  ];
+    )
+  );
 
   $form['#attached'][js][] = drupal_get_path('module', 'smartdocs_oauth_additions') . "/smartdocs_oauth_additions.js";
   return $form;
@@ -118,7 +118,7 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
       $template_auth = new \Apigee\SmartDocs\TemplateAuth($config,  $form_state['values']['model']);
       $template_auth_scheme = $template_auth->load($scheme_name);
       if($template_auth_scheme instanceof \Apigee\SmartDocs\Security\Oauth2TemplateAuthScheme){
-        $oauth2Credentials = [];
+        $oauth2Credentials = array();
         $oauth2Credentials['ERRORCODE'] = '';
         $oauth2Credentials['ERRORMESSAGE'] = '';
         $oauth2Credentials['ACCESSTOKEN']  = '';
@@ -128,44 +128,43 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
 
         $client_id = $template_auth_scheme->getClientId();
         $client_secret = $template_auth_scheme->getClientSecret();
-        $postBody = [];
+        $postBody = array();
 
         if($form_state['values']['user_app'] !== 'default' && user_is_logged_in()){
           global $user;
-          $entity = entity_load('developer_app',[], ['mail' => $user->mail, 'name' => $form_state['values']['user_app']]);
+          $entity = entity_load('developer_app',array(), array('mail' => $user->mail, 'name' => $form_state['values']['user_app']));
           $entity = reset($entity);
           $client_id = $entity->consumerKey;
           $client_secret = $entity->consumerSecret;
         }
 
         if($grant_type == 'client_credentials') {
-          $client_config = [
+          $client_config = array(
             'request.options' =>
-              [
-                'auth' => [
+              array(
+                'auth' => array(
                   $client_id,
                   $client_secret,
                   'basic',
-                ]
-              ]
-          ];
+                )
+              )
+          );
 
         } else if($grant_type == 'password') {
           $postBody['client_id'] = $client_id;
           $postBody['client_secret'] = $client_secret;
-          $client_config = [
-            'request.options' =>
-              [
-                'auth' => [
+          $client_config = array(
+            'request.options' => array(
+                'auth' => array(
                   $form_state['values']['client_username'],
                   $form_state['values']['client_password'],
                   'basic',
-                ]
-              ]
-          ];
+                )
+            )
+          );
         }
         $client = new \Guzzle\Http\Client($scheme->getAccessTokenUrl(), $client_config);
-        $request = $client->post('' ,[], drupal_http_build_query($postBody));
+        $request = $client->post('' ,array(), drupal_http_build_query($postBody));
         try {
           $response = $request->send();
           $oauth_res = json_decode($response->getBody(true));
@@ -179,14 +178,14 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
           $oauth2Credentials['ERRORCODE'] = $e->getCode();
           $oauth2Credentials['ERRORMESSAGE'] = $e->getMessage();
         }
-        return  array('#type' => 'ajax', '#commands' => [
-          ['command'=>'setAccessTokenAndLocation', 'data' => $oauth2Credentials],
-          ajax_command_invoke('[data-dismiss="modal"]', 'click', []),
-        ]);
+        return  array('#type' => 'ajax', '#commands' => array(
+          array('command'=>'setAccessTokenAndLocation', 'data' => $oauth2Credentials),
+          ajax_command_invoke('[data-dismiss="modal"]', 'click', array()),
+        ));
       }
     }
   }
-  return  array('#type' => 'ajax', '#commands' => [ajax_command_alert("Something went wrong !!")]);
+  return  array('#type' => 'ajax', '#commands' => array(ajax_command_alert("Something went wrong !!")));
 }
 
 /**
@@ -201,7 +200,7 @@ You should pass the "grant_type" as a query parameter in the "Access token url" 
 This will let the module provide Oauth widgets.
 __STR__;
 
-  drupal_set_message($message, "warning");
+  drupal_set_message(t($message), "warning");
   $form['#validate'][] = 'smartdocs_oauth_additions_form_smartdocs_model_security_scheme_validate';
 }
 
