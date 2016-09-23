@@ -26,7 +26,7 @@ function smartdocs_oauth_additions_preprocess_page(&$vars){
     }
     if(!empty($oauth_schemes)){
       $form = drupal_get_form('smartdocs_oauth_additions_form', $node, $oauth_schemes);
-      drupal_add_js(array('apigee_OauthClientCredentialsForm' => drupal_render($form)), 'setting');
+      drupal_add_js(array('apigee_oauth_additions_form' => drupal_render($form)), 'setting');
       drupal_add_library("system", "drupal.ajax");
       drupal_add_js(drupal_get_path('module', 'smartdocs_oauth_additions') ."/smartdocs_oauth_additions.js");
     }
@@ -197,7 +197,7 @@ function smartdocs_oauth_additions_form_smartdocs_model_security_scheme_alter(&$
   $message = <<<__STR__
 You have smartdocs_oauth_additions module enabled.
 You should pass the "grant_type" as a query parameter in the "Access token url" field.
-This will let the module provide Oauth widgets.
+This will let the module provide OAuth widgets.
 __STR__;
 
   drupal_set_message(t($message), "warning");

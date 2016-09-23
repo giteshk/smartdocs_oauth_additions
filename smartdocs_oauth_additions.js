@@ -13,7 +13,7 @@
                 .hover(function(){
                 $modal = $('[data-role="oauth2_modal"] .modal-body');
                 if(!$modal.hasClass('.replaceOAuthClientCredentialForm-processed')) {
-                    $modal.html(Drupal.settings.apigee_OauthClientCredentialsForm);
+                    $modal.html(Drupal.settings.apigee_oauth_additions_form);
                     Drupal.attachBehaviors($modal, Drupal.settings);
                 }
             });
