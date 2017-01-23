@@ -138,30 +138,22 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
           $client_secret = $entity->consumerSecret;
         }
 
+	  $client_config = array(
+	    'request.options' =>
+	      array(
+		'auth' => array(
+		  $client_id,
+		  $client_secret,
+		  'basic',
+		)
+	      )
+	  );
         if($grant_type == 'client_credentials') {
-          $client_config = array(
-            'request.options' =>
-              array(
-                'auth' => array(
-                  $client_id,
-                  $client_secret,
-                  'basic',
-                )
-              )
-          );
-
+          $postBody['grant_type'] = 'client_credentials';
         } else if($grant_type == 'password') {
-          $postBody['client_id'] = $client_id;
-          $postBody['client_secret'] = $client_secret;
-          $client_config = array(
-            'request.options' => array(
-                'auth' => array(
-                  $form_state['values']['client_username'],
-                  $form_state['values']['client_password'],
-                  'basic',
-                )
-            )
-          );
+          $postBody['username'] = $form_state['values']['client_username'];
+          $postBody['client_secret'] = $form_state['values']['client_password'];
+          $postBody['grant_type'] = 'password';
         }
         $client = new \Guzzle\Http\Client($scheme->getAccessTokenUrl(), $client_config);
         $request = $client->post('' ,array(), drupal_http_build_query($postBody));
