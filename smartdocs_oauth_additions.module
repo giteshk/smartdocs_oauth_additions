@@ -108,7 +108,7 @@ function smartdocs_oauth_additions_form($form, $form_state, $node, $oauth_scheme
     )
   );
 
-  $form['#attached'][js][] = drupal_get_path('module', 'smartdocs_oauth_additions') . "/smartdocs_oauth_additions.js";
+  $form['#attached']['js'][] = drupal_get_path('module', 'smartdocs_oauth_additions') . "/smartdocs_oauth_additions.js";
   return $form;
 }
 
