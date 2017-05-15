@@ -16,19 +16,29 @@ function smartdocs_oauth_additions_preprocess_page(&$vars){
     $config = devconnect_default_org_config();
     $node = $item['map'][1];
 
-    $security = new \Apigee\SmartDocs\Security($config, $node->field_smart_method_model[LANGUAGE_NONE][0]['taxonomy_term']->name, $node->field_smart_method_revision_num[LANGUAGE_NONE][0]['value']);
-    foreach($node->field_smart_method_security[LANGUAGE_NONE] as $row){
-      $scheme = $security->load($row['value']);
-      if($scheme instanceof \Apigee\SmartDocs\Security\Oauth2Scheme) {
-        $accessTokenUrl = drupal_parse_url($scheme->getAccessTokenUrl());
-        $oauth_schemes[$row['value']] = $accessTokenUrl['query']['grant_type'];
-      }
+    // Try to load the model taxonomy term.
+    if (!empty($node->field_smart_method_model[LANGUAGE_NONE][0]['taxonomy_term'])) {
+      $model_term = &$node->field_smart_method_model[LANGUAGE_NONE][0]['taxonomy_term'];
     }
-    if(!empty($oauth_schemes)){
-      $form = drupal_get_form('smartdocs_oauth_additions_form', $node, $oauth_schemes);
-      drupal_add_js(array('apigee_oauth_additions_form' => drupal_render($form)), 'setting');
-      drupal_add_library("system", "drupal.ajax");
-      drupal_add_js(drupal_get_path('module', 'smartdocs_oauth_additions') ."/smartdocs_oauth_additions.js");
+    elseif (!empty($node->field_smart_method_model[LANGUAGE_NONE][0]['tid'])) {
+      $model_term = taxonomy_term_load($node->field_smart_method_model[LANGUAGE_NONE][0]['tid']);
+    }
+
+    if (!empty($model_term)) {
+      $security = new \Apigee\SmartDocs\Security($config, $model_term->name, $node->field_smart_method_revision_num[LANGUAGE_NONE][0]['value']);
+      foreach($node->field_smart_method_security[LANGUAGE_NONE] as $row){
+        $scheme = $security->load($row['value']);
+        if($scheme instanceof \Apigee\SmartDocs\Security\Oauth2Scheme) {
+          $accessTokenUrl = drupal_parse_url($scheme->getAccessTokenUrl());
+          $oauth_schemes[$row['value']] = $accessTokenUrl['query']['grant_type'];
+        }
+      }
+      if(!empty($oauth_schemes)){
+        $form = drupal_get_form('smartdocs_oauth_additions_form', $node, $oauth_schemes);
+        drupal_add_js(array('apigee_oauth_additions_form' => drupal_render($form)), 'setting');
+        drupal_add_library("system", "drupal.ajax");
+        drupal_add_js(drupal_get_path('module', 'smartdocs_oauth_additions') ."/smartdocs_oauth_additions.js");
+      }
     }
   }
 }
@@ -98,7 +108,7 @@ function smartdocs_oauth_additions_form($form, $form_state, $node, $oauth_scheme
     )
   );
 
-  $form['#attached'][js][] = drupal_get_path('module', 'smartdocs_oauth_additions') . "/smartdocs_oauth_additions.js";
+  $form['#attached']['js'][] = drupal_get_path('module', 'smartdocs_oauth_additions') . "/smartdocs_oauth_additions.js";
   return $form;
 }
 
