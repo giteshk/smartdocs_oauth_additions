@@ -1,0 +1,56 @@
+<?php
+/**
+ * @file
+ * SmartDocs OAuth additions installation file.
+ */
+
+/**
+ * Implements hook_schema().
+ */
+function smartdocs_oauth_additions_schema() {
+  return array(
+    'smartdocs_oauth_additions_security' => array(
+      'description' => 'Store values for Access Token url',
+      'fields' => array(
+        'id' => array(
+          'description' => 'The primary identifier.',
+          'type' => 'serial',
+          'unassigned' => TRUE,
+          'not null' => TRUE,
+        ),
+        'model_id' => array(
+          'description' => 'The UUID of the model.',
+          'type' => 'char',
+          'length' => 36,
+          'not null' => TRUE,
+        ),
+        'revision_id' => array(
+          'description' => 'The UUID of the revision.',
+          'type' => 'char',
+          'length' => 36,
+          'not null' => TRUE,
+        ),
+        'scheme_name' => array(
+          'description' => 'The machine-readable name of the security scheme.',
+          'type' => 'varchar',
+          'length' => '128',
+        ),
+        'access_token_url' => array(
+          'description' => 'Access token URL for OAuth.',
+          'type' => 'text',
+          'not null' => TRUE,
+        ),
+      ),
+      'primary key' => array('id'),
+    ),
+  );
+}
+
+/**
+ * Create schema to store access_token_url.
+ */
+function smartdocs_oauth_additions_update_7100() {
+  if (empty(drupal_get_schema('smartdocs_oauth_additions_security'))) {
+    drupal_install_schema('smartdocs_oauth_additions');
+  }
+}
