@@ -220,13 +220,27 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
         curl_close($ch);
 
         if ($info['http_code'] != 200) {
-          $oauth2_credentials['ERRORCODE'] = $info['http_code'];
-          $oauth2_credentials['ERRORMESSAGE'] = '<pre>' . print_r(drupal_json_decode($response), TRUE) . '</pre>';
+          $oauth2_credentials['ERRORCODE'] = &$info['http_code'];
+
+          $json_response = drupal_json_decode($response);
+          if (json_last_error() == JSON_ERROR_NONE) {
+            $oauth2_credentials['ERRORMESSAGE'] = '<pre>' . print_r($json_response, TRUE) . '</pre>';
+          }
+          else {
+            $oauth2_credentials['ERRORMESSAGE'] = strip_tags($response);
+          }
         }
         else {
-          $response = drupal_json_decode($response);
-          $oauth2_credentials['ACCESSTOKEN']  = $response[$oauth2_credentials['ACCESSTOKENPARAMNAME']];
-          $oauth2_credentials['ACCESSTOKENTYPE'] = $response['token_type'];
+          $json_response = drupal_json_decode($response);
+          $json_error = json_last_error();
+          if ($json_error == JSON_ERROR_NONE) {
+            $oauth2_credentials['ACCESSTOKEN']  = $json_response[$oauth2_credentials['ACCESSTOKENPARAMNAME']];
+            $oauth2_credentials['ACCESSTOKENTYPE'] = $json_response['token_type'];
+          }
+          else {
+            $oauth2_credentials['ERRORCODE'] = $json_error;
+            $oauth2_credentials['ERRORMESSAGE'] = t('JSON decode error: %error.', array('%error' => json_last_error_msg())) . '<hr>' . strip_tags($response);
+          }
         }
 
         return array(
