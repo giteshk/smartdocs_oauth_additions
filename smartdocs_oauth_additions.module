@@ -193,10 +193,11 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
           $client_secret = $entity->consumerSecret;
         }
 
-        $credentials = array(
-          'username' => $form_state['values']['client_username'],
-          'password' => $form_state['values']['client_password'],
-        );
+        $credentials = array();
+        if ($grant_type == 'password') {
+          $credentials['username'] = $form_state['values']['client_username'];
+          $credentials['password'] = $form_state['values']['client_password'];
+        }
 
         $url = _smartdocs_oauth_additions_get_access_token_url($model->getUuid(), $revision->getUuid(), $scheme_name);
 
