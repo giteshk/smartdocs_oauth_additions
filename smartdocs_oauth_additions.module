@@ -8,7 +8,6 @@ use Apigee\SmartDocs\Model;
 use Apigee\SmartDocs\Security;
 use Apigee\SmartDocs\Security\Oauth2Scheme;
 
-const SMARTDOCS_OAUTH_ADDITIONS_SECURITY_TABLE = 'smartdocs_oauth_additions_security';
 const SMARTDOCS_OAUTH_ADDITIONS_DEVELOPER_APP_STATUS_APPROVED = 'approved';
 
 /**
@@ -41,19 +40,25 @@ function smartdocs_oauth_additions_preprocess_page(&$variables){
       $model = new Model($config);
       $model->load($model_term->name);
 
-      // Load model's revision.
-      $revision = new \Apigee\SmartDocs\Revision($config, $model->getUuid());
-      $revision->load($node->field_smart_method_revision_num[LANGUAGE_NONE][0]['value']);
-
       $security = new Security($config, $model_term->name, $node->field_smart_method_revision_num[LANGUAGE_NONE][0]['value']);
-      foreach($node->field_smart_method_security[LANGUAGE_NONE] as $row){
+      foreach($node->field_smart_method_security[LANGUAGE_NONE] as $row) {
         $scheme = $security->load($row['value']);
         if($scheme instanceof Oauth2Scheme) {
-          $accessTokenUrl = drupal_parse_url(_smartdocs_oauth_additions_get_access_token_url($model->getUuid(), $revision->getUuid(), $row['value']));
-          $oauth_schemes[$row['value']] = $accessTokenUrl['query']['grant_type'];
+          $grant_type = strtolower($scheme->getGrantType());
+
+          // Map swagger flow to grant type.
+          if ($grant_type == 'application') {
+            $grant_type = 'client_credentials';
+          }
+          elseif ($grant_type == 'accesscode') {
+            $grant_type = 'authorization_code';
+          }
+
+          $oauth_schemes[$row['value']] = $grant_type;
         }
       }
-      if(!empty($oauth_schemes)){
+
+      if(in_array('client_credentials', $oauth_schemes) || in_array('password', $oauth_schemes)) {
         $form = drupal_get_form('smartdocs_oauth_additions_form', $node, $oauth_schemes);
         drupal_add_js(array('apigee_oauth_additions_form' => drupal_render($form)), 'setting');
         drupal_add_library("system", "drupal.ajax");
@@ -80,6 +85,7 @@ function smartdocs_oauth_additions_form($form, $form_state, $node, $oauth_scheme
   if(empty($oauth_schemes)) {
     return $form;
   }
+
   $options = array();
   if (user_is_logged_in()) {
     global $user;
@@ -91,6 +97,7 @@ function smartdocs_oauth_additions_form($form, $form_state, $node, $oauth_scheme
     });
     asort($options);
   }
+
   $form['user_app'] = array(
     '#title' => 'API Key to use for the API call',
     '#type' => 'select',
@@ -135,7 +142,7 @@ function smartdocs_oauth_additions_form($form, $form_state, $node, $oauth_scheme
 }
 
 /**
- * Submit function to generate access token for the Oauth client Credentials
+ * Submit function to generate access token for the Oauth client Credentials.
  *
  * @param $form
  * @param $form_state
@@ -187,7 +194,7 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
 
         if($form_state['values']['user_app'] !== 'default' && user_is_logged_in()){
           global $user;
-          $entity = entity_load('developer_app',array(), array('mail' => $user->mail, 'name' => $form_state['values']['user_app']));
+          $entity = entity_load('developer_app', array(), array('mail' => $user->mail, 'name' => $form_state['values']['user_app']));
           $entity = reset($entity);
           $client_id = $entity->consumerKey;
           $client_secret = $entity->consumerSecret;
@@ -199,9 +206,8 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
           $credentials['password'] = $form_state['values']['client_password'];
         }
 
-        $url = _smartdocs_oauth_additions_get_access_token_url($model->getUuid(), $revision->getUuid(), $scheme_name);
-
-        $ch = curl_init($url);
+        // Initialize cURL.
+        $ch = curl_init($scheme->getAccessTokenUrl());
         curl_setopt_array($ch, array(
           CURLOPT_AUTOREFERER => TRUE,
           CURLOPT_FOLLOWLOCATION => TRUE,
@@ -215,21 +221,36 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
           CURLOPT_RETURNTRANSFER => TRUE,
         ));
 
+        // Execute cURL and get info.
         $response = curl_exec($ch);
         $info = curl_getinfo($ch);
+        $error_number = curl_errno($ch);
+        $error = curl_error($ch);
+
+        // Close connection.
         curl_close($ch);
 
-        if ($info['http_code'] != 200) {
+        // If we got a non-success code, then show an error.
+        if (!preg_match('/^2.{2}$/', $info['http_code'])) {
           $oauth2_credentials['ERRORCODE'] = &$info['http_code'];
 
-          $json_response = drupal_json_decode($response);
-          if (json_last_error() == JSON_ERROR_NONE) {
-            $oauth2_credentials['ERRORMESSAGE'] = '<pre>' . print_r($json_response, TRUE) . '</pre>';
+          // Show the response error message if the cURL execution was
+          // successful.
+          if ($error_number == CURLE_OK) {
+            $json_response = drupal_json_decode($response);
+            if (json_last_error() == JSON_ERROR_NONE) {
+              $oauth2_credentials['ERRORMESSAGE'] = '<pre>' . print_r($json_response, TRUE) . '</pre>';
+            }
+            else {
+              $oauth2_credentials['ERRORMESSAGE'] = strip_tags($response);
+            }
           }
+          // Show cURL error otherwise.
           else {
-            $oauth2_credentials['ERRORMESSAGE'] = strip_tags($response);
+            $oauth2_credentials['ERRORMESSAGE'] = "{$error} ({$error_number})";
           }
         }
+        // If the request was successful set the access token.
         else {
           $json_response = drupal_json_decode($response);
           $json_error = json_last_error();
@@ -237,10 +258,16 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
             $oauth2_credentials['ACCESSTOKEN']  = $json_response[$oauth2_credentials['ACCESSTOKENPARAMNAME']];
             $oauth2_credentials['ACCESSTOKENTYPE'] = $json_response['token_type'];
           }
+          // Show an error message if the response wasn't JSON.
           else {
             $oauth2_credentials['ERRORCODE'] = $json_error;
             $oauth2_credentials['ERRORMESSAGE'] = t('JSON decode error: %error.', array('%error' => json_last_error_msg())) . '<hr>' . strip_tags($response);
           }
+        }
+
+        // Write error entry to dblog.
+        if (!empty($oauth2_credentials['ERRORMESSAGE'])) {
+          watchdog(__FUNCTION__, "Request error: {$oauth2_credentials['ERRORMESSAGE']}");
         }
 
         return array(
@@ -261,107 +288,67 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
 }
 
 /**
- * Helper function to get access token url for a model.
- *
- * @param $model_id
- *   Model ID.
- * @param $revision_id
- *   Revision ID.
- * @param $scheme_name
- *   The name of the security scheme.
- *
- * @return string|null
- *   Returns the "Access Token URL", or null if not found for the model.
- *
- */
-function _smartdocs_oauth_additions_get_access_token_url($model_id, $revision_id, $scheme_name) {
-  return db_select(SMARTDOCS_OAUTH_ADDITIONS_SECURITY_TABLE, 's')
-    ->fields('s', array('access_token_url'))
-    ->condition('model_id', $model_id)
-    ->condition('revision_id', $revision_id)
-    ->condition('scheme_name', $scheme_name)
-    ->execute()
-    ->fetchField();
-}
-
-/**
  * Implements hook_form_FORM_ID_alter().
  */
-function smartdocs_oauth_additions_form_smartdocs_model_security_scheme_alter(&$form, $form_state){
-  // Add additional messages around the SmartDocs security settings form.
-  drupal_set_message(t('You have smartdocs_oauth_additions module enabled.<br>
-You should pass the "grant_type" as a query parameter in the "Access token url" field.<br>
-This will let the module provide OAuth widgets.)'), "warning");
+function smartdocs_oauth_additions_form_smartdocs_model_security_scheme_alter(&$form, $form_state) {
+  // Convert grant type field type to select.
+  $form['auth_fields']['grantType']['#type'] = 'select';
 
-  $form['auth_fields']['accessTokenUrl']['#required'] = TRUE;
+  // Update required fields on grant type change.
+  $form['auth_fields']['grantType']['#ajax'] = array(
+    'callback' => '_smartdocs_oauth_additions_form_smartdocs_model_security_scheme_update_auth_fields',
+    'method' => 'replace',
+    'wrapper' => 'auth-type-field-container',
+  );
 
-  if ($form['scheme_action']['#value'] == 'Update') {
-    $menu_item = menu_get_item();
-    $form['auth_fields']['accessTokenUrl']['#default_value'] = _smartdocs_oauth_additions_get_access_token_url($menu_item['page_arguments'][1]['id'], $menu_item['page_arguments'][2]['id'], $menu_item['page_arguments'][3]);
+  // Disable grant type field if the scheme is already saved.
+  $form['auth_fields']['grantType']['#disabled'] = $form['scheme_name']['#disabled'];
+
+  if (!empty($form_state['values']['auth_fields']['grantType'])) {
+    $grant_type = $form_state['values']['auth_fields']['grantType'];
+  }
+  else {
+    $grant_type = $form['auth_fields']['grantType']['#default_value'];
   }
 
-  // Validate and save Access Token URL field's value.
-  $form['#validate'][] = 'smartdocs_oauth_additions_form_smartdocs_model_security_scheme_validate';
-  $form['#submit'][] = 'smartdocs_oauth_additions_form_smartdocs_model_security_scheme_submit';
+  // Set field requirements based on the grant type.
+  switch (strtolower($grant_type)) {
+    // Handle swagger accessCode flow and authorization_code grant type
+    // together.
+    case 'accesscode':
+    case 'authorization_code':
+      $form['auth_fields']['grantType']['#default_value'] = 'AUTHORIZATION_CODE';
+      $form['auth_fields']['authorizationUrl']['#required'] = TRUE;
+      $form['auth_fields']['accessTokenUrl']['#required'] = TRUE;
+      break;
+
+    // Handle swagger application flow and client_credentials grant type
+    // together.
+    case 'application':
+    case 'client_credentials':
+      $form['auth_fields']['grantType']['#default_value'] = 'CLIENT_CREDENTIALS';
+      $form['auth_fields']['authorizationUrl']['#required'] = FALSE;
+      $form['auth_fields']['accessTokenUrl']['#required'] = TRUE;
+      break;
+
+    case 'implicit':
+      $form['auth_fields']['authorizationUrl']['#required'] = TRUE;
+      break;
+
+    case 'password':
+      $form['auth_fields']['authorizationUrl']['#required'] = FALSE;
+      $form['auth_fields']['accessTokenUrl']['#required'] = TRUE;
+      $form['auth_fields']['advanced_settings']['authorizationVerb']['#required'] = FALSE;
+      break;
+  }
 }
 
 /**
- * Validate callback.
+ * Ajax callback.
  *
- * Make the user enter the grant_type in the Access Token URL field.
- * We have to do this since the EDGE backend doesn't support this options right
- * now.
+ * Refresh auth fields.
  */
-function smartdocs_oauth_additions_form_smartdocs_model_security_scheme_validate($form, &$form_state){
-  $access_token_url = drupal_parse_url($form_state['values']['auth_fields']['accessTokenUrl']);
-  if(!isset($access_token_url['query']['grant_type'])){
-    form_error($form['auth_fields']['accessTokenUrl'], t('The grant_type is not set in the Access Token URL'));
-  }
-  elseif (!in_array($access_token_url['query']['grant_type'], array('client_credentials', 'password'))) {
-    form_error($form['auth_fields']['accessTokenUrl'], t('The grant type must be either "client_credentials" or "password".'));
-  }
-}
-
-/**
- * Submit callback.
- *
- * Save "Access Token URL" to a custom table, since the EDGE backend doesn't
- * support this right now.
- */
-function smartdocs_oauth_additions_form_smartdocs_model_security_scheme_submit($form, &$form_state) {
-  if ($form_state['values']['type'] == 'OAUTH2') {
-    try {
-      // Get existing access token url entry.
-      $id = db_select(SMARTDOCS_OAUTH_ADDITIONS_SECURITY_TABLE, 's')
-        ->fields('s', array('id'))
-        ->condition('model_id', $form_state['values']['model']['id'])
-        ->condition('revision_id', $form_state['values']['revision']['id'])
-        ->condition('scheme_name', $form_state['values']['scheme_name'])
-        ->execute()
-        ->fetchField();
-
-      if (empty($id)) {
-        db_insert(SMARTDOCS_OAUTH_ADDITIONS_SECURITY_TABLE)
-          ->fields(array(
-            'model_id' => $form_state['values']['model']['id'],
-            'revision_id' => $form_state['values']['revision']['id'],
-            'scheme_name' => $form_state['values']['scheme_name'],
-            'access_token_url' => $form_state['values']['auth_fields']['accessTokenUrl'],
-          ))
-          ->execute();
-      }
-      else {
-        db_update(SMARTDOCS_OAUTH_ADDITIONS_SECURITY_TABLE)
-          ->fields(array(
-            'access_token_url' => $form_state['values']['auth_fields']['accessTokenUrl'],
-          ))
-          ->condition('id', $id)
-          ->execute();
-      }
-    }
-    catch (Exception $e) {
-      drupal_set_message(t('Failed to save value for "Access Token URL".'), 'error');
-      watchdog_exception(__FUNCTION__, $e, 'Failed to save value for "Access Token URL".');
-    }
-  }
+function _smartdocs_oauth_additions_form_smartdocs_model_security_scheme_update_auth_fields($form, &$form_state) {
+  $form_state['rebuild'] = TRUE;
+  return $form['auth_fields'];
 }
