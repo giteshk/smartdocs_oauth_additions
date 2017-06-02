@@ -1,15 +1,26 @@
 <?php
+/**
+ * @file
+ * SmartDocs OAuth additions.
+ */
+
+use Apigee\SmartDocs\Model;
+use Apigee\SmartDocs\Security;
+use Apigee\SmartDocs\Security\Oauth2Scheme;
+
+const SMARTDOCS_OAUTH_ADDITIONS_DEVELOPER_APP_STATUS_APPROVED = 'approved';
 
 /**
- * On SmartDocs pages add the logic for Oauth Client Credentials Grant
+ * Implements hook_preprocess_HOOK().
  *
- * This module is a hack to allow SmartDocs to create a widget for Client Credential Grants
+ * On SmartDocs pages add the logic for Oauth Client Credentials Grant.
+ *
+ * This module is a hack to allow SmartDocs to create a widget for Client
+ * Credential Grants.
  *
  * The Edge backend cannot process this information.
- *
- * @param $vars
  */
-function smartdocs_oauth_additions_preprocess_page(&$vars){
+function smartdocs_oauth_additions_preprocess_page(&$variables){
   $item = menu_get_item();
   if($item['map'][0] == 'node' && $item['map'][1]->type == 'smart_method'){
     $oauth_schemes = array();
@@ -25,15 +36,29 @@ function smartdocs_oauth_additions_preprocess_page(&$vars){
     }
 
     if (!empty($model_term)) {
-      $security = new \Apigee\SmartDocs\Security($config, $model_term->name, $node->field_smart_method_revision_num[LANGUAGE_NONE][0]['value']);
-      foreach($node->field_smart_method_security[LANGUAGE_NONE] as $row){
+      // Load model.
+      $model = new Model($config);
+      $model->load($model_term->name);
+
+      $security = new Security($config, $model_term->name, $node->field_smart_method_revision_num[LANGUAGE_NONE][0]['value']);
+      foreach($node->field_smart_method_security[LANGUAGE_NONE] as $row) {
         $scheme = $security->load($row['value']);
-        if($scheme instanceof \Apigee\SmartDocs\Security\Oauth2Scheme) {
-          $accessTokenUrl = drupal_parse_url($scheme->getAccessTokenUrl());
-          $oauth_schemes[$row['value']] = $accessTokenUrl['query']['grant_type'];
+        if($scheme instanceof Oauth2Scheme) {
+          $grant_type = strtolower($scheme->getGrantType());
+
+          // Map swagger flow to grant type.
+          if ($grant_type == 'application') {
+            $grant_type = 'client_credentials';
+          }
+          elseif ($grant_type == 'accesscode') {
+            $grant_type = 'authorization_code';
+          }
+
+          $oauth_schemes[$row['value']] = $grant_type;
         }
       }
-      if(!empty($oauth_schemes)){
+
+      if(in_array('client_credentials', $oauth_schemes) || in_array('password', $oauth_schemes)) {
         $form = drupal_get_form('smartdocs_oauth_additions_form', $node, $oauth_schemes);
         drupal_add_js(array('apigee_oauth_additions_form' => drupal_render($form)), 'setting');
         drupal_add_library("system", "drupal.ajax");
@@ -44,31 +69,35 @@ function smartdocs_oauth_additions_preprocess_page(&$vars){
 }
 
 /**
- * Form to accept Username and password so that it we can generate the access token
+ * Form builder.
+ *
+ * Form to accept Username and password so that it we can generate the access
+ * token.
  *
  * @param $form
  * @param $form_state
  * @param $node
  * @param $oauth_schemes
+ *
  * @return mixed
  */
-function smartdocs_oauth_additions_form($form, $form_state, $node, $oauth_schemes){
+function smartdocs_oauth_additions_form($form, $form_state, $node, $oauth_schemes) {
   if(empty($oauth_schemes)) {
     return $form;
   }
+
   $options = array();
   if (user_is_logged_in()) {
     global $user;
     $app_entities = entity_load('developer_app', FALSE, array('mail' => $user->mail));
-    array_walk($app_entities, function ($app) use (&$options, $api_products) {
-      // TODO Each Developer app status should be stored in constants on
-      // the Drupal side. Ex.: DEVELOPER_APP_STATUS_APPROVED.
-      if ($app->credentialStatus == 'approved' && !array_intersect($api_products, $app->apiProducts)) {
+    array_walk($app_entities, function ($app) use (&$options) {
+      if ($app->credentialStatus == SMARTDOCS_OAUTH_ADDITIONS_DEVELOPER_APP_STATUS_APPROVED) {
         $options[$app->name] = $app->attributes['DisplayName'];
       }
     });
     asort($options);
   }
+
   $form['user_app'] = array(
     '#title' => 'API Key to use for the API call',
     '#type' => 'select',
@@ -113,7 +142,7 @@ function smartdocs_oauth_additions_form($form, $form_state, $node, $oauth_scheme
 }
 
 /**
- * Submit function to generate access token for the Oauth client Credentials
+ * Submit function to generate access token for the Oauth client Credentials.
  *
  * @param $form
  * @param $form_state
@@ -121,6 +150,30 @@ function smartdocs_oauth_additions_form($form, $form_state, $node, $oauth_scheme
  */
 function smartdocs_oauth_additions_form_generate_token($form, $form_state){
   $config = devconnect_default_org_config();
+
+  $node = &$form_state['build_info']['args'][0];
+  // Try to load the model taxonomy term.
+  if (!empty($node->field_smart_method_model[LANGUAGE_NONE][0]['taxonomy_term'])) {
+    $model_term = &$node->field_smart_method_model[LANGUAGE_NONE][0]['taxonomy_term'];
+  }
+  elseif (!empty($node->field_smart_method_model[LANGUAGE_NONE][0]['tid'])) {
+    $model_term = taxonomy_term_load($node->field_smart_method_model[LANGUAGE_NONE][0]['tid']);
+  }
+
+  // Exit if the model term wasn't successfully loaded.
+  if (empty($model_term)) {
+    watchdog(__FUNCTION__, 'Failed to load model term.');
+    return array('#type' => 'ajax', '#commands' => array(ajax_command_alert(t('Failed to load model term!'))));
+  }
+
+  // Load model.
+  $model = new Model($config);
+  $model->load($model_term->name);
+
+  // Load model's revision.
+  $revision = new \Apigee\SmartDocs\Revision($config, $model->getUuid());
+  $revision->load($model->getLatestRevisionNumber());
+
   $security = new \Apigee\SmartDocs\Security($config, $form_state['values']['model'], $form_state['values']['revision']);
   foreach($form_state['values']['security'] as $scheme_name => $grant_type) {
     $scheme = $security->load($scheme_name);
@@ -128,102 +181,177 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
       $template_auth = new \Apigee\SmartDocs\TemplateAuth($config,  $form_state['values']['model']);
       $template_auth_scheme = $template_auth->load($scheme_name);
       if($template_auth_scheme instanceof \Apigee\SmartDocs\Security\Oauth2TemplateAuthScheme){
-        $oauth2Credentials = array();
-        $oauth2Credentials['ERRORCODE'] = '';
-        $oauth2Credentials['ERRORMESSAGE'] = '';
-        $oauth2Credentials['ACCESSTOKEN']  = '';
-        $oauth2Credentials['ACCESSTOKENTYPE'] = 'bearer';
-        $oauth2Credentials['ACCESSTOKENPARAMNAME'] = 'access_token';
-        $oauth2Credentials['PROXYURL'] = '';
+        $oauth2_credentials = array();
+        $oauth2_credentials['ERRORCODE'] = '';
+        $oauth2_credentials['ERRORMESSAGE'] = '';
+        $oauth2_credentials['ACCESSTOKEN']  = '';
+        $oauth2_credentials['ACCESSTOKENTYPE'] = 'bearer';
+        $oauth2_credentials['ACCESSTOKENPARAMNAME'] = 'access_token';
+        $oauth2_credentials['PROXYURL'] = '';
 
         $client_id = $template_auth_scheme->getClientId();
         $client_secret = $template_auth_scheme->getClientSecret();
-        $postBody = array();
 
         if($form_state['values']['user_app'] !== 'default' && user_is_logged_in()){
           global $user;
-          $entity = entity_load('developer_app',array(), array('mail' => $user->mail, 'name' => $form_state['values']['user_app']));
+          $entity = entity_load('developer_app', array(), array('mail' => $user->mail, 'name' => $form_state['values']['user_app']));
           $entity = reset($entity);
           $client_id = $entity->consumerKey;
           $client_secret = $entity->consumerSecret;
         }
 
-        if($grant_type == 'client_credentials') {
-          $client_config = array(
-            'request.options' =>
-              array(
-                'auth' => array(
-                  $client_id,
-                  $client_secret,
-                  'basic',
-                )
-              )
-          );
+        $credentials = array();
+        if ($grant_type == 'password') {
+          $credentials['username'] = $form_state['values']['client_username'];
+          $credentials['password'] = $form_state['values']['client_password'];
+        }
 
-        } else if($grant_type == 'password') {
-          $postBody['client_id'] = $client_id;
-          $postBody['client_secret'] = $client_secret;
-          $client_config = array(
-            'request.options' => array(
-                'auth' => array(
-                  $form_state['values']['client_username'],
-                  $form_state['values']['client_password'],
-                  'basic',
-                )
-            )
-          );
-        }
-        $client = new \Guzzle\Http\Client($scheme->getAccessTokenUrl(), $client_config);
-        $request = $client->post('' ,array(), drupal_http_build_query($postBody));
-        try {
-          $response = $request->send();
-          $oauth_res = json_decode($response->getBody(true));
-          $oauth2Credentials['ACCESSTOKEN'] = $oauth_res->access_token;
-        }catch (\Guzzle\Http\Exception\BadResponseException $e) {
-          $response = $e->getResponse();
-          $error_res = json_decode($response->getBody(true));
-          $oauth2Credentials['ERRORCODE'] = $error_res->errorCode;
-          $oauth2Credentials['ERRORMESSAGE'] = $error_res->remediation ;
-        }catch(Exception $e){
-          $oauth2Credentials['ERRORCODE'] = $e->getCode();
-          $oauth2Credentials['ERRORMESSAGE'] = $e->getMessage();
-        }
-        return  array('#type' => 'ajax', '#commands' => array(
-          array('command'=>'setAccessTokenAndLocation', 'data' => $oauth2Credentials),
-          ajax_command_invoke('[data-dismiss="modal"]', 'click', array()),
+        // Initialize cURL.
+        $ch = curl_init($scheme->getAccessTokenUrl());
+        curl_setopt_array($ch, array(
+          CURLOPT_AUTOREFERER => TRUE,
+          CURLOPT_FOLLOWLOCATION => TRUE,
+          CURLOPT_MAXREDIRS => 5,
+          CURLOPT_POST => TRUE,
+          CURLOPT_POSTFIELDS => drupal_http_build_query(array(
+              'client_id' => $client_id,
+              'client_secret' => $client_secret,
+              'grant_type' => $grant_type,
+            ) + $credentials),
+          CURLOPT_RETURNTRANSFER => TRUE,
+          CURLOPT_HTTPHEADER => array(
+            'Content-Type: application/x-www-form-urlencoded',
+          ),
         ));
+
+        // Execute cURL and get info.
+        $response = curl_exec($ch);
+        $info = curl_getinfo($ch);
+        $error_number = curl_errno($ch);
+        $error = curl_error($ch);
+
+        // Close connection.
+        curl_close($ch);
+
+        // If we got a non-success code, then show an error.
+        if (!preg_match('/^2.{2}$/', $info['http_code'])) {
+          $oauth2_credentials['ERRORCODE'] = &$info['http_code'];
+
+          // Show the response error message if the cURL execution was
+          // successful.
+          if ($error_number == CURLE_OK) {
+            $json_response = drupal_json_decode($response);
+            if (json_last_error() == JSON_ERROR_NONE) {
+              $oauth2_credentials['ERRORMESSAGE'] = '<pre>' . print_r($json_response, TRUE) . '</pre>';
+            }
+            else {
+              $oauth2_credentials['ERRORMESSAGE'] = strip_tags($response);
+            }
+          }
+          // Show cURL error otherwise.
+          else {
+            $oauth2_credentials['ERRORMESSAGE'] = "{$error} ({$error_number})";
+          }
+        }
+        // If the request was successful set the access token.
+        else {
+          $json_response = drupal_json_decode($response);
+          $json_error = json_last_error();
+          if ($json_error == JSON_ERROR_NONE) {
+            $oauth2_credentials['ACCESSTOKEN']  = $json_response[$oauth2_credentials['ACCESSTOKENPARAMNAME']];
+            $oauth2_credentials['ACCESSTOKENTYPE'] = $json_response['token_type'];
+          }
+          // Show an error message if the response wasn't JSON.
+          else {
+            $oauth2_credentials['ERRORCODE'] = $json_error;
+            $oauth2_credentials['ERRORMESSAGE'] = t('JSON decode error: %error.', array('%error' => json_last_error_msg())) . '<hr>' . strip_tags($response);
+          }
+        }
+
+        // Write error entry to dblog.
+        if (!empty($oauth2_credentials['ERRORMESSAGE'])) {
+          watchdog(__FUNCTION__, "Request error: {$oauth2_credentials['ERRORMESSAGE']}");
+        }
+
+        return array(
+          '#type' => 'ajax',
+          '#commands' => array(
+            array(
+              'command' => 'setAccessTokenAndLocation',
+              'data' => $oauth2_credentials
+            ),
+            ajax_command_invoke('[data-dismiss="modal"]', 'click', array()),
+          ),
+        );
       }
     }
   }
-  return  array('#type' => 'ajax', '#commands' => array(ajax_command_alert("Something went wrong !!")));
+
+  return array('#type' => 'ajax', '#commands' => array(ajax_command_alert("Something went wrong!")));
 }
 
 /**
- * Add additional messages around the SmartDocs security settings form.
- * @param $form
- * @param $form_state
+ * Implements hook_form_FORM_ID_alter().
  */
-function smartdocs_oauth_additions_form_smartdocs_model_security_scheme_alter(&$form, $form_state){
-  $message = <<<__STR__
-You have smartdocs_oauth_additions module enabled.
-You should pass the "grant_type" as a query parameter in the "Access token url" field.
-This will let the module provide OAuth widgets.
-__STR__;
+function smartdocs_oauth_additions_form_smartdocs_model_security_scheme_alter(&$form, $form_state) {
+  // Convert grant type field type to select.
+  $form['auth_fields']['grantType']['#type'] = 'select';
 
-  drupal_set_message(t($message), "warning");
-  $form['#validate'][] = 'smartdocs_oauth_additions_form_smartdocs_model_security_scheme_validate';
-}
+  // Update required fields on grant type change.
+  $form['auth_fields']['grantType']['#ajax'] = array(
+    'callback' => '_smartdocs_oauth_additions_form_smartdocs_model_security_scheme_update_auth_fields',
+    'method' => 'replace',
+    'wrapper' => 'auth-type-field-container',
+  );
 
-/**
- * Make the user enter the grant_type in the Access Token URL field.
- * We have to do this since the backend doesn't support this options right now.
- *
- * @param $form
- * @param $form_state
- */
-function smartdocs_oauth_additions_form_smartdocs_model_security_scheme_validate($form, $form_state){
-  $accesstokenurl = drupal_parse_url($form_state['values']['auth_fields']['accessTokenUrl']);
-  if(!isset($accesstokenurl['query']['grant_type'])){
-    form_set_error('values][auth_fields][accessTokenUrl', "grant_type is not set in the Access Token URL");
+  // Disable grant type field if the scheme is already saved.
+  $form['auth_fields']['grantType']['#disabled'] = $form['scheme_name']['#disabled'];
+
+  if (!empty($form_state['values']['auth_fields']['grantType'])) {
+    $grant_type = $form_state['values']['auth_fields']['grantType'];
   }
+  else {
+    $grant_type = $form['auth_fields']['grantType']['#default_value'];
+  }
+
+  // Set field requirements based on the grant type.
+  switch (strtolower($grant_type)) {
+    // Handle swagger accessCode flow and authorization_code grant type
+    // together.
+    case 'accesscode':
+    case 'authorization_code':
+      $form['auth_fields']['grantType']['#default_value'] = 'AUTHORIZATION_CODE';
+      $form['auth_fields']['authorizationUrl']['#required'] = TRUE;
+      $form['auth_fields']['accessTokenUrl']['#required'] = TRUE;
+      break;
+
+    // Handle swagger application flow and client_credentials grant type
+    // together.
+    case 'application':
+    case 'client_credentials':
+      $form['auth_fields']['grantType']['#default_value'] = 'CLIENT_CREDENTIALS';
+      $form['auth_fields']['authorizationUrl']['#required'] = FALSE;
+      $form['auth_fields']['accessTokenUrl']['#required'] = TRUE;
+      break;
+
+    case 'implicit':
+      $form['auth_fields']['authorizationUrl']['#required'] = TRUE;
+      break;
+
+    case 'password':
+      $form['auth_fields']['authorizationUrl']['#required'] = FALSE;
+      $form['auth_fields']['accessTokenUrl']['#required'] = TRUE;
+      $form['auth_fields']['advanced_settings']['authorizationVerb']['#required'] = FALSE;
+      break;
+  }
+}
+
+/**
+ * Ajax callback.
+ *
+ * Refresh auth fields.
+ */
+function _smartdocs_oauth_additions_form_smartdocs_model_security_scheme_update_auth_fields($form, &$form_state) {
+  $form_state['rebuild'] = TRUE;
+  return $form['auth_fields'];
 }
