@@ -219,6 +219,9 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
               'grant_type' => $grant_type,
             ) + $credentials),
           CURLOPT_RETURNTRANSFER => TRUE,
+          CURLOPT_HTTPHEADER => array(
+            'Content-Type: application/x-www-form-urlencoded',
+          ),
         ));
 
         // Execute cURL and get info.
