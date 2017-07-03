@@ -72,7 +72,7 @@ function smartdocs_oauth_additions_form($form, $form_state, $node, $oauth_scheme
   $form['user_app'] = array(
     '#title' => 'API Key to use for the API call',
     '#type' => 'select',
-    '#options' => array('default' => 'Default Credentials') + $options,
+    '#options' => $options,
     '#description' => 'Choose one of your apps to use. You can request an app to be created by clicking ' . l('here', 'user/me/apps'),
   );
   if(in_array('password', $oauth_schemes)){
