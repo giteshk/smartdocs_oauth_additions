@@ -222,8 +222,10 @@ __STR__;
  * @param $form_state
  */
 function smartdocs_oauth_additions_form_smartdocs_model_security_scheme_validate($form, $form_state){
-  $accesstokenurl = drupal_parse_url($form_state['values']['auth_fields']['accessTokenUrl']);
-  if(!isset($accesstokenurl['query']['grant_type'])){
-    form_set_error('values][auth_fields][accessTokenUrl', "grant_type is not set in the Access Token URL");
-  }
+    if(isset($form_state['values']['auth_fields']['accessTokenUrl'])) {
+        $accesstokenurl = drupal_parse_url($form_state['values']['auth_fields']['accessTokenUrl']);
+        if (!isset($accesstokenurl['query']['grant_type'])) {
+            form_set_error('values][auth_fields][accessTokenUrl', "grant_type is not set in the Access Token URL");
+        }
+    }
 }
