@@ -159,6 +159,7 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
                 )
               )
           );
+          $postBody['grant_type'] = $grant_type;
 
         } else if($grant_type == 'password') {
           $postBody['client_id'] = $client_id;
@@ -174,7 +175,7 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
           );
         }
         $client = new \Guzzle\Http\Client($scheme->getAccessTokenUrl(), $client_config);
-        $request = $client->post('' ,array(), drupal_http_build_query($postBody));
+        $request = $client->post('' ,array('content-type' => 'application/x-www-form-urlencoded'), drupal_http_build_query($postBody));
         try {
           $response = $request->send();
           $oauth_res = json_decode($response->getBody(true));
