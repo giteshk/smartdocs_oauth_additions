@@ -13,6 +13,7 @@ function smartdocs_oauth_additions_preprocess_page(&$vars){
   $item = menu_get_item();
   if($item['map'][0] == 'node' && $item['map'][1]->type == 'smart_method'){
     $oauth_schemes = array();
+    $scopes = array();
     $config = devconnect_default_org_config();
     $node = $item['map'][1];
 
@@ -31,10 +32,13 @@ function smartdocs_oauth_additions_preprocess_page(&$vars){
         if($scheme instanceof \Apigee\SmartDocs\Security\Oauth2Scheme) {
           $accessTokenUrl = drupal_parse_url($scheme->getAccessTokenUrl());
           $oauth_schemes[$row['value']] = $accessTokenUrl['query']['grant_type'];
+          foreach($scheme->getScopes() as $key=>$desc) {
+            $scopes[$key] = $key;
+          }
         }
       }
       if(!empty($oauth_schemes)){
-        $form = drupal_get_form('smartdocs_oauth_additions_form', $node, $oauth_schemes);
+        $form = drupal_get_form('smartdocs_oauth_additions_form', $node, $oauth_schemes, $scopes);
         drupal_add_js(array('apigee_oauth_additions_form' => drupal_render($form)), 'setting');
         drupal_add_library("system", "drupal.ajax");
         drupal_add_js(drupal_get_path('module', 'smartdocs_oauth_additions') ."/smartdocs_oauth_additions.js");
@@ -52,7 +56,7 @@ function smartdocs_oauth_additions_preprocess_page(&$vars){
  * @param $oauth_schemes
  * @return mixed
  */
-function smartdocs_oauth_additions_form($form, $form_state, $node, $oauth_schemes){
+function smartdocs_oauth_additions_form($form, $form_state, $node, $oauth_schemes, $scopes = array()){
   if(empty($oauth_schemes)) {
     return $form;
   }
@@ -100,6 +104,10 @@ function smartdocs_oauth_additions_form($form, $form_state, $node, $oauth_scheme
     '#type' => 'value',
     '#value' => $oauth_schemes,
   );
+  $form['scopes'] = array(
+    '#type' => 'value',
+    '#value' => $scopes,
+  );
   $form['submit'] = array(
     '#type' => 'submit',
     '#value' => t('Generate OAuth Token'),
@@ -138,7 +146,10 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
 
         $client_id = $template_auth_scheme->getClientId();
         $client_secret = $template_auth_scheme->getClientSecret();
-        $postBody = array();
+        $postBody = array('grant_type' => $grant_type);
+        if(!empty($form_state['values']['scopes'])) {
+          $postBody['scope'] = reset($form_state['values']['scopes']);
+        }
 
         if($form_state['values']['user_app'] !== 'default' && user_is_logged_in()){
           global $user;
@@ -159,7 +170,6 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
                 )
               )
           );
-          $postBody['grant_type'] = $grant_type;
 
         } else if($grant_type == 'password') {
           $postBody['client_id'] = $client_id;
@@ -175,7 +185,7 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
           );
         }
         $client = new \Guzzle\Http\Client($scheme->getAccessTokenUrl(), $client_config);
-        $request = $client->post('' ,array('content-type' => 'application/x-www-form-urlencoded'), drupal_http_build_query($postBody));
+        $request = $client->post('' ,array('Content-Type' => 'application/x-www-form-urlencoded'), drupal_http_build_query($postBody));
         try {
           $response = $request->send();
           $oauth_res = json_decode($response->getBody(true));
@@ -183,9 +193,11 @@ function smartdocs_oauth_additions_form_generate_token($form, $form_state){
         }catch (\Guzzle\Http\Exception\BadResponseException $e) {
           $response = $e->getResponse();
           $error_res = json_decode($response->getBody(true));
+          watchdog(__FUNCTION__, $error_res);
           $oauth2Credentials['ERRORCODE'] = $error_res->errorCode;
           $oauth2Credentials['ERRORMESSAGE'] = $error_res->remediation ;
         }catch(Exception $e){
+          watchdog(__FUNCTION__, $e->getCode() . ":" . $e->getMessage());
           $oauth2Credentials['ERRORCODE'] = $e->getCode();
           $oauth2Credentials['ERRORMESSAGE'] = $e->getMessage();
         }
